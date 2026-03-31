@@ -22,6 +22,10 @@ import os
 import scipy.signal as signal
 import scipy.interpolate as interpolate
 import scipy
+from scipy.signal import savgol_filter
+
+
+speedLight = 299792458
 
 #%%
 #### Create custom colormap
@@ -105,6 +109,42 @@ def load_spectra_frost(fileList):
         spectrum = np.array(np.loadtxt(file, delimiter='\t', usecols= 1 , skiprows=1))
         spectrumList += [spectrum]
     return spectrumList
+
+def transition_indices_savgol(traceInterp,
+                              window_length=21,
+                              polyorder=3,
+                              margin=100):
+    """
+    Compute index of largest negative slope for each row using Savitzky-Golay.
+
+    Returns:
+        indices : (N,) array of indices (column positions)
+        derivatives : (N x M) array of first derivatives
+    """
+
+    n_rows, n_cols = traceInterp.shape
+    center = n_cols // 2
+
+    indices = np.zeros(n_rows, dtype=int)
+    derivatives = np.zeros_like(traceInterp)
+
+    for row in range(n_rows):
+        signal = traceInterp[row, :]
+
+        # Smooth + derivative
+        deriv = savgol_filter(signal, window_length, polyorder, deriv=1)
+        derivatives[row, :] = deriv
+
+        # Window around center (now in column direction)
+        start = max(center - margin, 0)
+        end = min(center + margin, n_cols)
+
+        # Most negative slope
+        local_idx = np.argmin(deriv[start:end])
+        indices[row] = start + local_idx
+
+    return indices, derivatives
+
 
 #%% Load trace data
 ''' Import files '''
@@ -547,12 +587,73 @@ traceInterpFunction = scipy.interpolate.interp2d(delay_data, angfreq_data-carrie
 traceInterp = traceInterpFunction(delay_data, omegaArrayFFT)
 # traceInterp = traceInterpFunction(delayArrayFFT, omegaArrayFFT)
 
+
+
 #%%
 paramList = ['Time resolution (fs): '+str(dt), 'Time range (fs): '+str(timeArrayFFT[-1]-timeArrayFFT[0]),
              'Ang freq resolution (PHz): '+str(domega), 'Ang freq range (PHz): '+str(omegaArrayFFT[-1]-omegaArrayFFT[0]),
              'Delay resolution (fs): '+str(dt), 'Delay range (fs): '+str(delay_data[-1]-delay_data[0]),
             'Array sizes: '+str(numFFT)]
 print(paramList)
+
+#%%
+
+'''Find the delay with the largest negative slope'''
+idx, dydx = transition_indices_savgol(traceInterp)
+row = 500  # choose row
+
+
+plt.plot(traceInterp[row, :])
+plt.plot(idx[row], traceInterp[row, idx[row]], 'ro')
+plt.show()
+
+
+#%%
+'''Because the data is still noisy, run it through a rolling average'''
+window = 5
+kernel = np.ones(window) / window
+
+const = 2400 #constant to add to the GD to make it centered around zero. 
+
+GD = np.convolve(timeArrayFFT[idx], kernel, mode="same")+const
+
+
+plt.plot(2*np.pi*speedLight/(omegaArrayFFT+carrier_angfreq)*1E-15*1E6, GD)
+plt.xlim(1.6,4.2)
+plt.title("Group Delay")
+plt.show()
+
+fig, ax = plt.subplots(figsize=(8, 5))
+im = ax.pcolormesh(2*np.pi*speedLight/(omegaArrayFFT+carrier_angfreq)*1E-15*1E6, timeArrayFFT, traceInterp, shading = 'auto', cmap=jet_transparent)
+fig.colorbar(im)
+plt.title('Measured Data')
+ax.set_xlabel('Wavelength (nm)')
+ax.set_ylabel('Probe Delay (fs)')
+fig.tight_layout()
+plt.xlim(1.9,4)
+plt.show()
+
+fig, ax = plt.subplots(figsize=(8, 5))
+im = ax.pcolormesh(2*np.pi*speedLight/(omegaArrayFFT+carrier_angfreq)*1E-15*1E6, timeArrayFFT, traceInterp, shading = 'auto', cmap=jet_transparent)
+fig.colorbar(im)
+plt.title('Measured Data and Group Delay')
+ax.set_xlabel('Wavelength (nm)')
+ax.set_ylabel('Probe Delay (fs)')
+fig.tight_layout()
+plt.plot(2*np.pi*speedLight/(omegaArrayFFT+carrier_angfreq)*1E-15*1E6, GD, color = 'r')
+plt.xlim(1.9,4)
+plt.show()
+
+#%%
+#NUMERICAL INTEGRATION TO OBTAIN THE PHASE
+phi = scipy.integrate.cumtrapz(GD, omegaArrayFFT)
+phi = np.append(phi, phi[-1])
+phi = phi - np.average(phi)
+#plt.plot(omegaArrayShifted, GD)
+plt.plot(omegaArrayFFT, phi)
+#plt.ylim(-100, 100)
+#plt.ylim(-5, -30)
+plt.show()
 
 #%% Plot final trace
 
@@ -561,8 +662,11 @@ ax.pcolormesh(delay_data, omegaArrayFFT, traceInterp, cmap=jet_transparent, shad
 ax.set_xlabel('Probe Delay (fs)')
 ax.set_ylabel('Angular Frequency (PHz)')
 ax.set_title('Processed Trace')
+plt.plot(GD, omegaArrayFFT)
 # ax.set_ylim(-0.5, 0.5)
 plt.show()
+
+#%%
 
 #%% Save Data
 
@@ -573,7 +677,7 @@ saveFolder = ''
 saveFilename = 'processed trace'
 dataTraceDict = {'trace': traceInterp, 'time': timeArrayFFT, 'angfreq': omegaArrayFFT, 'delay': delay_data,
                  'parameters': paramList, 'filtering': filterNotes,
-                 'carrierAngFreq': carrier_angfreq}
+                 'carrierAngFreq': carrier_angfreq, 'phase': phi}
 # dataTraceDict = {'trace': traceFiltered, 'delay': delayArrayFFT, 'angfreq': omegaArrayFFT,
 #                  'probe': probeTimeAmp, 'spectrumFund': spectrumAngFreqFund.to_numpy(),
 #                  'parameters': paramList, 'filtering': filterNotes, 
