@@ -29,5 +29,7 @@ def load_mat_dah(path):
     parameters = np.array(data['M_trace']['parameters'][0][0].squeeze(), dtype=str) # Array size, time resolution and range, angular frequency resolution and range
     filtering = np.array(data['M_trace']['filtering'][0][0].squeeze(), dtype=str)
     carrierAngFreq = np.array(data['M_trace']['carrierAngFreq'][0][0].squeeze(), dtype=float)
+    phase = np.array(data['M_trace']['phase'][0][0].squeeze(), dtype=float)
 
-    return timeArray, omegaArray, delayArray, trace, carrierAngFreq, parameters, filtering
+
+    return timeArray, omegaArray, delayArray, trace, carrierAngFreq, parameters, filtering, phase
